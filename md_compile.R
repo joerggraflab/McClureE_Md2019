@@ -59,49 +59,41 @@ TREE = read.tree("DataFiles/Rep_Set_tree.tree")
 physeq = phyloseq(OTU, TAX, MAP,TREE)
 save(physeq,file=("DataFiles/physeq_current.RData")) # Save the phyloseq data object in a .RData file 
 ########## Keep only samples for publishing ##########
-ls.pub<-as.character(read.csv("DataFiles/list_samplePublish.csv",header=FALSE,sep=",")$V1) # Import list of samples 
-phyR.McC<-subset_samples(physeq, sample_names(physeq)%in%c(ls.pub))# Keep only samples for publishing (physeq.McClure)
+ls.pub <- as.character(read.csv("DataFiles/list_samplePublish.csv",header=FALSE,sep=",")$V1) # Import list of samples 
+phyR.McC <- subset_samples(physeq, sample_names(physeq)%in%c(ls.pub))# Keep only samples for publishing (physeq.McClure)
 save(phyR.McC,file=("DataFiles/physeq_publish.RData")) # Save phyR.McC in a .RData file 
-phyR.trim1<-subset_taxa(phyR.McC,taxa_sums(phyR.McC)>1) # keep only OTUs with >1 read total
-########## Load most recent data ##########
-### Use this to skip lines 35--48 if the basic phyloseq data sets have previously been produced and saved ###
-# load("DataFiles/physeq_current.RData") # Use to re-load saved phyloseq data object 
-# load("DataFiles/physeq_publish.RData") # Use to re-load saved phyloseq data object
+phyR.trim1 <- subset_taxa(phyR.McC,taxa_sums(phyR.McC)>1) # keep only OTUs with >1 read total
 
-##################################################################
-########## Pre-process data to remove contaminant OTUs  ##########
-##################################################################
-phyR.PCRneg<-subset_samples(phyR.trim1,Sample_Type%in%c("PCRneg","Reagents")) # keep PCR negative control samples
-phyR.taxaNeg<-subset_taxa(phyR.PCRneg,taxa_sums(phyR.PCRneg)>1) # keep only OTUs with >1 read total
+##########################################################################################
+########## Pre-process data to identify contaminant OTUs  ################################
+##########################################################################################
+phyR.PCRneg <- subset_samples(phyR.trim1,Sample_Type%in%c("PCRneg","Reagents")) # keep PCR negative control samples
+phyR.taxaNeg <- subset_taxa(phyR.PCRneg,taxa_sums(phyR.PCRneg)>1) # keep only OTUs with >1 read total
 var.maxNeg <- max(otu_table(phyR.taxaNeg)) # find the greatest count of any OTU in a single sample
 
 ### Trim unuseable samples ###
-phyR.negConc<-subset_samples(phyR.trim1,!PostPCRDNA_ng_uL%in%c("Unk")) # Remove any samples where Post PCR [DNA] was not calculated
-phyR.negCount<-subset_samples(phyR.negConc,sample_sums(phyR.negConc)>=1) # keep samples with >=1 reads
-phyR.1min<-prune_taxa(taxa_sums(phyR.negCount)>1,phyR.negCount) # keep only taxa with >1 reads
+phyR.negCount <- subset_samples(phyR.trim1,!PostPCRDNA_ng_uL%in%c("Unk") & sample_sums(phyR.trim1)>=1) # Remove any samples where i) Post PCR [DNA] was not calculated and that ii) have >=1 reads
+phyR.1min <- prune_taxa(taxa_sums(phyR.negCount)>1,phyR.negCount) # keep only taxa with >1 reads
 
 ### Map ###
-map.neg<-sample_data(phyR.1min) # pull map data from phyloseq object
-map.neg$Conc<-with(map.neg,
-                     ifelse(PostPCRDNA_ng_uL%in%c("zero","Unk",""), "0", 
-                            as.character(PostPCRDNA_ng_uL)))
-map.neg$c <- as.numeric(as.character(map.neg$Conc)) * 10 + 1 # ridiculous math to make decontam work
-map.neg$q2 <- as.numeric(as.character(map.neg$c))
-phyR.1min = merge_phyloseq(phyR.1min,map.neg) # return map data to the phyloseq object
+sample_data(phyR.1min)$Conc <- with(sample_data(phyR.1min),
+                                    ifelse(PostPCRDNA_ng_uL%in%c("zero","Unk",""), "0",
+                                    as.character(PostPCRDNA_ng_uL)))
+sample_data(phyR.1min)$c <- as.numeric(as.character(sample_data(phyR.1min)$Conc)) * 10 + 1 # math to make decontam work
+sample_data(phyR.1min)$q2 <- as.numeric(as.character(sample_data(phyR.1min)$c))
 
-### FREQUENCY ###
+### Identify contaminants by frequency ###
 contamdf.freq <- isContaminant(phyR.1min, method="frequency", conc="q2")
 phyR.contamFreq <- prune_taxa(contamdf.freq$contaminant, phyR.1min)
 
 phyR.allc <- prune_taxa(taxa_names(phyR.contamFreq), phyR.1min) # (physeq all contaminants)
 phyR.nc <- subset_taxa(phyR.1min,!taxa_names(phyR.1min)%in%c(taxa_names(phyR.contamFreq)))
 
-
 #########################################################################################################
 ########## Pre-process data to remove low count OTUs, contaminant OTUs, and duplicate samples  ##########
 #########################################################################################################
-phyR.sin<-subset_samples(phyR.trim1,Age!="M")
-phyR.10min<-subset_samples(phyR.sin,sample_sums(phyR.sin)>=10000) # keep samples with >=10000 reads (physeq.minimum 10,000)
+phyR.sin <- subset_samples(phyR.trim1,Age!="M") # Remove negative and positive control samples
+phyR.10min <- subset_samples(phyR.sin,sample_sums(phyR.sin)>=10000) # keep samples with >=10000 reads (physeq.minimum 10,000)
 dt.phyPru = fast_melt(phyR.10min) # make data table from physeq object (data table. physeq Pruned)
 prev.phyPru = dt.phyPru[, list(Prevalence = sum(count >= var.maxNeg),
                                TotalPer = sum(count),
@@ -109,122 +101,124 @@ prev.phyPru = dt.phyPru[, list(Prevalence = sum(count >= var.maxNeg),
                                MaxCount = max(count)),
                         by = TaxaID] # make simple table listing 'TaxaID, Prevalence, and TotalPer' (prevalence . physeq Pruned)
 ls.Pres = prev.phyPru[(Prevalence > 0 & MaxCount >= var.maxNeg), TaxaID] # Make list of OTUs present in dataset and having at least maxNeg reads in at least one sample (list.high prevalence)
-phyR.pru2<-prune_taxa(ls.Pres,phyR.10min) # remove identified taxa from phyloseq object (physeq.Pruned 2)
-phyT.Tform<-transform_sample_counts(phyR.pru2, function(x) x/sum(x)) # transform raw counts to fraction (physeq.Transform)
+phyR.pru2 <- prune_taxa(ls.Pres,phyR.10min) # remove identified taxa from phyloseq object (physeq.Pruned 2)
+phyT.Tform <- transform_sample_counts(phyR.pru2, function(x) x/sum(x)) # transform raw counts to fraction (physeq.Transform)
 
 ### Add new column to map data. 'Header' column will be used for many figures
-sample_data(phyT.Tform)$Header<-with(sample_data(phyT.Tform),
+sample_data(phyT.Tform)$Header <- with(sample_data(phyT.Tform),
                                      ifelse(AnimalSource=="USA","",
-                                            ifelse(AnimalSource=="BBEZ","",
-                                                   ifelse(AnimalSource=="GrotonMA","MA",
-                                                          ifelse(AnimalSource=="CarogaNY","NY",
-                                                                 ifelse(AnimalSource=="Wlot","CT",
-                                                                        ifelse(AnimalSource=="MtSnowVT","VT",
-                                                                               ifelse(AnimalSource=="Schoolhouse_Brook","CT",     
-                                                                                      as.character(AnimalSource)))))))))
+                                     ifelse(AnimalSource=="BBEZ","",
+                                     ifelse(AnimalSource=="GrotonMA","MA",
+                                     ifelse(AnimalSource=="CarogaNY","NY",
+                                     ifelse(AnimalSource=="Wlot","CT",
+                                     ifelse(AnimalSource=="MtSnowVT","VT",
+                                     ifelse(AnimalSource=="Schoolhouse_Brook","CT",     
+                                     as.character(AnimalSource)))))))))
 ### Add new column to map data. 'Da1fb' column will be used to merge some time points together
-sample_data(phyT.Tform)$Da1Fb<-with(sample_data(phyT.Tform),
-                                    ifelse(Da1F=="8","7",
-                                    ifelse(Da1F=="Unk","4",
-                                    ifelse(Da1F=="31","30",
-                                    ifelse(Da1F=="35","30",
+sample_data(phyT.Tform)$Da1Fb <- with(sample_data(phyT.Tform),
+                                    ifelse(Da1F=="31","30+",
+                                    ifelse(Da1F=="35","30+",
+                                    ifelse(Da1F=="76","30+",
+                                    ifelse(Da1F=="82","30+",
                                     ifelse(Da1F=="90","90+",
+                                    ifelse(Da1F=="92","90+",
                                     ifelse(Da1F=="94","90+",
+                                    ifelse(Da1F=="96","90+",
+                                    ifelse(Da1F=="97","90+",
                                     ifelse(Da1F=="99","90+",
-                                    ifelse(Da1F=="100","90+",
                                     ifelse(Da1F=="101","90+",
                                     ifelse(Da1F=="108","90+",
                                     ifelse(Da1F=="110","90+",
+                                    ifelse(Da1F=="112","90+",
                                     ifelse(Da1F=="113","90+",
                                     ifelse(Da1F=="116","90+",
+                                    ifelse(Da1F=="118","90+",
                                     ifelse(Da1F=="130","90+",
                                     ifelse(Da1F=="165","90+",
+                                    ifelse(Da1F=="166","90+",
+                                    ifelse(Da1F=="167","90+",
+                                    ifelse(Da1F=="169","90+",
+                                    ifelse(Da1F=="172","90+",
                                     ifelse(Da1F=="193","90+",
                                     ifelse(Da1F=="215","90+",
                                     ifelse(Da1F=="265","90+",
-                                    as.character(Da1F)))))))))))))))))))) 
+                                    as.character(Da1F)))))))))))))))))))))))))))) 
 ### Add new column to map data. 'Da1fb' column will be used to merge some time points together
-sample_data(phyR.sin)$Da1Fb<-with(sample_data(phyR.sin),
-                                  ifelse(Da1F=="8","7",
-                                         ifelse(Da1F=="31","30",
-                                                ifelse(Da1F=="35","30",
-                                                       ifelse(Da1F=="82","90+",
-                                                       ifelse(Da1F=="90","90+",
-                                                              ifelse(Da1F=="92","90+",
-                                                                     ifelse(Da1F=="94","90+",
-                                                                            ifelse(Da1F=="96","90+",
-                                                                                   ifelse(Da1F=="97","90+",
-                                                              ifelse(Da1F=="99","90+",
-                                                                     ifelse(Da1F=="100","90+",
-                                                                            ifelse(Da1F=="101","90+",
-                                                                                   ifelse(Da1F=="108","90+",
-                                                                                          ifelse(Da1F=="110","90+",
-                                                                                                 ifelse(Da1F=="112","90+",
-                                                                                                 ifelse(Da1F=="113","90+",
-                                                                                                        ifelse(Da1F=="116","90+",
-                                                                                                               ifelse(Da1F=="118","90+",
-                                                                                                        ifelse(Da1F=="130","90+",
-                                                                                                               ifelse(Da1F=="165","90+",
-                                                                                                                      ifelse(Da1F=="166","90+",
-                                                                                                                             ifelse(Da1F=="167","90+",
-                                                                                                                                    ifelse(Da1F=="169","90+",
-                                                                                                                                           ifelse(Da1F=="172","90+",
-                                                                                                                                                  ifelse(Da1F=="193","90+",
-                                                                                                                      ifelse(Da1F=="215","90+",
-                                                                                                                             ifelse(Da1F=="265","90+",
-                                                                                                                                    as.character(Da1F)))))))))))))))))))))))))))))
-###############################################
-########## Initial sample subsetting ##########
-###############################################
+sample_data(phyR.sin)$Da1Fb <- with(sample_data(phyR.sin),
+                                  ifelse(Da1F=="31","30+",
+                                  ifelse(Da1F=="35","30+",
+                                  ifelse(Da1F=="76","30+",
+                                  ifelse(Da1F=="82","30+",
+                                  ifelse(Da1F=="90","90+",
+                                  ifelse(Da1F=="92","90+",
+                                  ifelse(Da1F=="94","90+",
+                                  ifelse(Da1F=="96","90+",
+                                  ifelse(Da1F=="97","90+",
+                                  ifelse(Da1F=="99","90+",
+                                  ifelse(Da1F=="101","90+",
+                                  ifelse(Da1F=="108","90+",
+                                  ifelse(Da1F=="110","90+",
+                                  ifelse(Da1F=="112","90+",
+                                  ifelse(Da1F=="113","90+",
+                                  ifelse(Da1F=="116","90+",
+                                  ifelse(Da1F=="118","90+",
+                                  ifelse(Da1F=="130","90+",
+                                  ifelse(Da1F=="165","90+",
+                                  ifelse(Da1F=="166","90+",
+                                  ifelse(Da1F=="167","90+",
+                                  ifelse(Da1F=="169","90+",
+                                  ifelse(Da1F=="172","90+",
+                                  ifelse(Da1F=="193","90+",
+                                  ifelse(Da1F=="215","90+",
+                                  ifelse(Da1F=="265","90+",
+                                  as.character(Da1F))))))))))))))))))))))))))))
+####################################################################################################
+########## Initial sample subsetting ###############################################################
+####################################################################################################
 # Thank you to jeffkimbrel for the next two lines! #
-ls.taxaDC <- setdiff(taxa_names(phyT.Tform), taxa_names(phyR.allc)) # find the difference between taxa in contaminant list and physeqAn (taxa decontam)
-phyT.leech <- prune_taxa(ls.taxaDC, phyT.Tform) # keep only taxa not in taxaNC (physeq decontam)
-write.table(psmelt(phyT.leech), "tableMelt_Tot.csv", sep=",",row.names=TRUE,col.names=TRUE) # export table to csv, row and column names included
+ls.taxaDC <- setdiff(taxa_names(phyT.Tform), taxa_names(phyR.allc)) # find the difference between taxa in contaminant list and physeqAn (list . taxa DeContam)
+phyT.leech <- prune_taxa(ls.taxaDC, phyT.Tform) # keep only taxa not in taxaNC (phyloseq Transform . leech)
+#write.table(psmelt(phyT.leech), "tableMelt_Tot.csv", sep=",",row.names=TRUE,col.names=TRUE) # export table to csv, row and column names included
 
-phyT.USA<-subset_samples(phyT.leech,AnimalSource=="USA" & Subproject!="Deposit" & Da2F%in%c("none","0"))
-phyT.hv<-subset_samples(phyT.leech,Taxonomic_ID=="Hverbana")
-phyT.md<-subset_samples(phyT.leech,Taxonomic_ID=="Mdecora") # subset containing only Macrobdella samples
-phyT.mdCT<-subset_samples(phyT.md,AnimalSource=="Wlot") # subset containing only W-lot samples (CT Macrobdella)
-phyT.mdMA<-subset_samples(phyT.md,AnimalSource=="GrotonMA") # subset containing only MA samples (MA Macrobdella)
-phyT.mdNY<-subset_samples(phyT.md,AnimalSource=="CarogaNY") # subset containing only NY samples (NY Macrobdella)
-phyT.mdVT<-subset_samples(phyT.md,AnimalSource=="MtSnowVT") # subset containing only VT samples (VT Macrobdella)
+phyT.hv <- subset_samples(phyT.leech,Taxonomic_ID=="Hverbana") # subset containing only Hirudo verbana samples (phyloseq Transform . hirudo verbana)
+phyT.md <- subset_samples(phyT.leech,Taxonomic_ID=="Mdecora") # subset containing only Macrobdella samples (phyloseq Transform . macrobdella decora)
+phyT.mdCT <- subset_samples(phyT.md,AnimalSource=="Wlot") # subset containing only W-lot samples (phyloseq Transform . macrobdella decora CT)
+phyT.mdMA <- subset_samples(phyT.md,AnimalSource=="GrotonMA") # subset containing only MA samples (phyloseq Transform . macrobdella decora MA)
+phyT.mdNY <- subset_samples(phyT.md,AnimalSource=="CarogaNY") # subset containing only NY samples (phyloseq Transform . macrobdella decora NY)
+phyT.mdVT <- subset_samples(phyT.md,AnimalSource=="MtSnowVT") # subset containing only VT samples (phyloseq Transform . macrobdella decora VT)
 
-##################################################
-########## Effect of extraction method  ##########
-##################################################
-bray.md<- phyloseq::distance(phyT.md, method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
-sd.md <- data.frame(sample_data(phyT.md)) # make
-perm.md<-adonis(bray.md ~ Kit_Name, data = sd.md, method = "bray") # Adonis test (permanova . macrobdella decora)
-perm.md
+####################################################################################################
+########## Effect of Extraction Method  ############################################################
+####################################################################################################
+bray.md <- phyloseq::distance(phyT.md, method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+sd.md <- data.frame(sample_data(phyT.md)) # separate sample data (sample data . macrobdella decora)
+perm.md <- adonis(bray.md ~ Kit_Name, data = sd.md, method = "bray") # Adonis test to determine effect of extraction kit (permanova . macrobdella decora)
+perm.md # print results
 
-########################################
-########## Initial PERMANOVA  ##########
-########################################
-phyT.adonis1<-phyT.leech # assign data for permanova testing (phyloseq transformed . adonis function)
-dist.adonis1<- phyloseq::distance(phyT.adonis1, method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
-sd.adonis1 <- data.frame(sample_data(phyT.adonis1)) # make a data frame from the sample_data (sample data . macrobdella decora)
-perm.adonis1<-adonis(dist.adonis1 ~ Taxonomic_ID, data = sd.adonis1, method = "bray") # Adonis test (permanova . macrobdella decora)
-perm.adonis1
+####################################################################################################
+########## Effect of Leech Species  ################################################################
+####################################################################################################
+bray.leech <- phyloseq::distance(phyT.leech, method = "bray") # Calculate bray curtis distance matrix (bray metric . leech)
+sd.leech <- data.frame(sample_data(phyT.leech)) # make a data frame from the sample_data (sample data . leech)
+perm.taxa <- adonis(bray.leech ~ Taxonomic_ID, data = sd.leech, method = "bray") # Adonis test (permanova . taxa)
+perm.taxa # print results
 
-#######################################################################
-########## PERMANOVA for taxonomic groups merged at "Order"  ##########
-#######################################################################
-phyT.adonisOrder<-tax_glom(phyT.leech,taxrank="Order") # assign data for permanova testing (phyloseq transformed . adonis function)
-dist.adonisOrder<- phyloseq::distance(phyT.adonisOrder, method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
-sd.adonisOrder <- data.frame(sample_data(phyT.adonisOrder)) # make a data frame from the sample_data (sample data . macrobdella decora)
-perm.adonisOrder<-adonis(dist.adonisOrder ~ Taxonomic_ID, data = sd.adonisOrder, method = "bray") # Adonis test (permanova . macrobdella decora)
-perm.adonisOrder
+### OTUs grouped at 'order' level
+phyT.leechO <- tax_glom(phyT.leech,taxrank="Order") # assign data for permanova testing (phyloseq Transformed . leech Order)
+bray.leechO <- phyloseq::distance(phyT.leechO, method = "bray") # Calculate bray curtis distance matrix (bray metric . leech Order)
+perm.taxaOrder <- adonis(bray.leechO ~ Taxonomic_ID, data = sd.leech, method = "bray") # Adonis test (permanova . taxa Order)
+perm.taxaOrder # print results
 
 #####################################################################################
 ########## FIGURE 1 #################################################################
 #####################################################################################
 #### Host Species and Sample Type NMDS ###
-dsNMDS<-phyT.leech # define data for analysis
+dsNMDS <- phyT.leech # define data for analysis
 sample_data(dsNMDS)$Sample_Type = factor(sample_data(dsNMDS)$Sample_Type, levels = c("ILF","Intestinum","Bladder"))
-mNMDS<-"unifrac" # define metric for analysis
+mNMDS <- "unifrac" # define metric for analysis
 distOrd = phyloseq::distance(dsNMDS, method = c(mNMDS)) # calculate distances
 ord = ordinate(dsNMDS, method = "NMDS", distance = distOrd) # calculate ordination
-nmds.SpeciesType<-plot_ordination(dsNMDS, ord, shape="Sample_Type",color="Taxonomic_ID") + 
+nmds.SpeciesType <- plot_ordination(dsNMDS, ord, shape="Sample_Type",color="Taxonomic_ID") + 
   geom_point(aes(fill=Taxonomic_ID),size=2) +
   stat_ellipse(type = "t", level = 0.95, linetype = 2) +
   scale_color_manual(values=pal.CB) +
@@ -234,10 +228,10 @@ nmds.SpeciesType<-plot_ordination(dsNMDS, ord, shape="Sample_Type",color="Taxono
   guides(color = "none", size="none",fill="none")
 #nmds.SpeciesType # uncomment to print plot
 ### Host Species and Sample Type by Order NMDS ###
-dsNMDSorder<-tax_glom(dsNMDS,taxrank="Order")
+dsNMDSorder <- tax_glom(dsNMDS,taxrank="Order")
 distOrdO = phyloseq::distance(dsNMDSorder, method = c(mNMDS)) # calculate distances
 ordO = ordinate(dsNMDSorder, method = "NMDS", distance = distOrdO) # calculate ordination
-nmds.SpeciesTypeOrder<-plot_ordination(dsNMDSorder, ordO, shape="Sample_Type",color="Taxonomic_ID") + 
+nmds.SpeciesTypeOrder <- plot_ordination(dsNMDSorder, ordO, shape="Sample_Type",color="Taxonomic_ID") + 
   geom_point(aes(fill=Taxonomic_ID),size=2) +
   stat_ellipse(type = "t", level = 0.95, linetype = 2) +
   scale_color_manual(values=pal.CB) +
@@ -249,141 +243,31 @@ nmds.SpeciesTypeOrder<-plot_ordination(dsNMDSorder, ordO, shape="Sample_Type",co
 ggsave(plot_grid(nmds.SpeciesType, nmds.SpeciesTypeOrder, labels = "AUTO",ncol=2), filename="NMDS/plotNMDS_fig1.eps", device="eps", dpi="retina",width=6.87,units="in") # Save FIGURE 1 to .eps file
 ########## end FIGURE 1 ##############################################################
 
-##########################################
-########## H.verbana PERMANOVA  ##########
-##########################################
-phyT.adonisHv<-subset_samples(phyT.leech, Taxonomic_ID=="Hverbana") # assign data for permanova testing (phyloseq transformed . adonis Hirudo verbana)
-dist.adonisHv<- phyloseq::distance(phyT.adonisHv, method = "bray") # Calculate bray curtis distance matrix (distance . adonis Hirudo verbana)
+############################################################################################
+########## H.verbana variation by Organ, Feeding, Supplier, and Shipment lot  ##############
+############################################################################################
+phyT.adonisHv <- subset_samples(phyT.leech, Taxonomic_ID=="Hverbana") # assign data for permanova testing (phyloseq transformed . adonis Hirudo verbana)
+dist.adonisHv <- phyloseq::distance(phyT.adonisHv, method = "bray") # Calculate bray curtis distance matrix (distance . adonis Hirudo verbana)
 sd.adonisHv <- data.frame(sample_data(phyT.adonisHv)) # make a data frame from the sample_data (sample data . adonis Hirudo verbana)
-perm.adonisHv<-adonis(dist.adonisHv ~ Sample_Type * Da1Fb * AnimalSource * ParentLot, data = sd.adonisHv, method = "bray") # Adonis test (permanova . adonis Hirudo verbana)
+perm.adonisHv <- adonis(dist.adonisHv ~ Sample_Type * Da1Fb * AnimalSource * ParentLot, data = sd.adonisHv, method = "bray") # Adonis test (permanova . adonis Hirudo verbana)
 perm.adonisHv
 
-#########################################
-########## M.decora PERMANOVA  ##########
-#########################################
-phyT.adonisMd<-subset_samples(phyT.leech, Taxonomic_ID=="Mdecora") # assign data for permanova testing (phyloseq transformed . adonis Macrobdella decora)
-dist.adonisMd<- phyloseq::distance(phyT.adonisMd, method = "bray") # Calculate bray curtis distance matrix (distance . adonis Macrobdella decora)
+###########################################################################################
+########## M.decora variation by Organ, Feeding, Supplier, and Shipment lot  ##############
+###########################################################################################
+phyT.adonisMd <- subset_samples(phyT.leech, Taxonomic_ID=="Mdecora") # assign data for permanova testing (phyloseq transformed . adonis Macrobdella decora)
+dist.adonisMd <- phyloseq::distance(phyT.adonisMd, method = "bray") # Calculate bray curtis distance matrix (distance . adonis Macrobdella decora)
 sd.adonisMd <- data.frame(sample_data(phyT.adonisMd)) # make a data frame from the sample_data (sample data . adonis Macrobdella decora)
-perm.adonisMd<-adonis(dist.adonisMd ~ Sample_Type * WildMonth * Da1Fb * AnimalSource, data = sd.adonisMd, method = "bray") # Adonis test (permanova . adonis Macrobdella decora)
+perm.adonisMd <- adonis(dist.adonisMd ~ Sample_Type * WildMonth * Da1Fb * AnimalSource, data = sd.adonisMd, method = "bray") # Adonis test (permanova . adonis Macrobdella decora)
 perm.adonisMd
 
-bray.mdInt<- phyloseq::distance(subset_samples(phyT.adonisMd,Sample_Type=="Intestinum"), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
-sd.mdInt <- data.frame(sample_data(subset_samples(phyT.adonisMd,Sample_Type=="Intestinum"))) # make a data frame from the sample_data (sample data . macrobdella decora)
-pairwise.adonis(bray.mdInt,sd.mdInt$Da1Fb)
+#bray.mdInt<- phyloseq::distance(subset_samples(phyT.adonisMd,Sample_Type=="Intestinum"), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+#sd.mdInt <- data.frame(sample_data(subset_samples(phyT.adonisMd,Sample_Type=="Intestinum"))) # make a data frame from the sample_data (sample data . macrobdella decora)
+#pairwise.adonis(bray.mdInt,sd.mdInt$Da1Fb)
 
-#####################################################################################
-########## FIGURE 2 #################################################################
-#####################################################################################
-phyR.adult<-subset_samples(phyR.pru2,sample_names(phyR.sin)%in%c(sample_names(phyT.leech)))
-phyR.ILF<-subset_samples(phyR.adult,Sample_Type%in%c("ILF")) # subset phyR.md to include only ILF samples
-phyR.Int<-subset_samples(phyR.adult,Sample_Type=="Intestinum")
-########## Alpha Diversity ILF ##########
-phyR.adILF<-subset_samples(phyR.ILF,!Da2F%in%c("1","2","4","7","8","28") & !Da1F%in%c("1","2","4","7")) # keep samples that are less than 1 or more than 30 days after feeding (Phyloseq raw . alpha diversity ILF)) # assign data for alpha diversity analysis (alpha diversitydata). This data must be non-transformed
-pDiv.ILF<-plot_richness(phyR.adILF, x = "Taxonomic_ID",measures=c("Shannon")) +
-  geom_boxplot(aes(fill=Taxonomic_ID)) +
-  geom_jitter(width=0.15) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 10),limits=c(0,3)) +
-  theme_bw() +
-  theme(text=element_text(size=10),axis.text.x=element_text(angle = 0),axis.title.x=element_blank(),legend.position = "none") +
-  scale_x_discrete(labels=c("Hverbana" = "Hirudo verbana", "Mdecora" = "Macrobdella decora")) +
-  scale_fill_manual(values=c("#808080","#f9f9f9"))
-#pDiv.ILF # uncomment to print plot
-########## Alpha Diversity Intestinum ##########
-phyR.adInt<-subset_samples(phyR.Int,!Da2F%in%c("1","2","4","7","8","28") & !Da1F%in%c("1","2","4","7")) # keep samples that are less than 1 or more than 30 days after feeding (Phyloseq raw . alpha diversity Intestinum)
-pDiv.Int<-plot_richness(phyR.adInt, x="Taxonomic_ID", measures=c("Shannon")) + 
-  geom_boxplot(aes(fill=Taxonomic_ID)) +
-  geom_jitter(width=0.15) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 10),limits=c(0,3)) +
-  theme_bw() +
-  theme(text=element_text(size=10),axis.text.x=element_text(angle = 0),axis.title.x=element_blank(),legend.position = "none") +
-  scale_x_discrete(labels=c("Hverbana" = "Hirudo verbana", "Mdecora" = "Macrobdella decora")) +
-  scale_fill_manual(values=c("#808080","#f9f9f9"))
-#pDiv.Int # uncomment to print plot
-ggsave(plot_grid(pDiv.ILF, pDiv.Int, labels = "AUTO"), filename="Plots/plotAlpha_fig2.eps", device="eps", dpi="retina",width=6.87,units="in") # Save FIGURE 2 to .eps file
-########## end FIGURE 2 ##############################################################
-
-
-##### Shifts in OTU abundance between H.verbana ILF and M.decora ILF #####
-#phyR.adILF<-subset_samples(phyR.ILF,!Da2F%in%c("1","2","4","7","8","28") & !Da1F%in%c("1","2","4","7")) # keep samples that are less than 1 or more than 30 days after feeding (Phyloseq raw . alpha diversity ILF)) # assign data for alpha diversity analysis (alpha diversitydata). This data must be non-transformed
-dsq.start = phyloseq_to_deseq2(phyR.adILF, ~ Taxonomic_ID)
-geoMeans = apply(counts(dsq.start), 1, gm_mean)
-esf.start = estimateSizeFactors(dsq.start, geoMeans = geoMeans)
-dsq.start = DESeq(esf.start, fitType="local")
-
-res = results(dsq.start)
-res = res[order(res$padj, na.last=NA), ]
-alpha = 0.001
-sigtab = res[(res$padj < alpha), ]
-sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(phyR.adILF)[rownames(sigtab), ], "matrix"))
-ls.mdChange<-levels(sigtab$Number)
-
-phyT.mdChange<-prune_taxa(ls.mdChange,subset_samples(phyT.Tform,sample_names(phyT.Tform)%in%c(sample_names(phyR.adILF))))
-dt.mdChange = fast_melt(phyT.mdChange) # make data table from physeq object (data table. physeq Pruned)
-prev.mdChange = dt.mdChange[, list(Prevalence = sum(count >= .001),
-                               TotalPer = sum(count),
-                               MinCount = min(count),
-                               MaxCount = max(count)),
-                        by = TaxaID] # make simple table listing 'TaxaID, Prevalence, and TotalPer' (prevalence . physeq Pruned)
-ls.sigChange = prev.mdChange[(Prevalence > 3 & MaxCount >= .01), TaxaID] # Make list of OTUs present in dataset and having at least maxNeg reads in at least one sample (list.high prevalence)
-
-phyR.dsq<-prune_taxa(ls.sigChange,phyR.adILF)
-dsq.start = phyloseq_to_deseq2(phyR.dsq, ~ Taxonomic_ID)
-geoMeans = apply(counts(dsq.start), 1, gm_mean)
-esf.start = estimateSizeFactors(dsq.start, geoMeans = geoMeans)
-dsq.start = DESeq(esf.start, fitType="local")
-
-res = results(dsq.start)
-res = res[order(res$padj, na.last=NA), ]
-alpha = 0.001
-sigtab = res[(res$padj < alpha), ]
-sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(phyR.dsq)[rownames(sigtab), ], "matrix"))
-posigtab = sigtab[abs(sigtab[, "log2FoldChange"]) > 2, ]
-posigtab = posigtab[, c("baseMean", "log2FoldChange", "lfcSE", "padj", "Phylum", "Class", "Order","Family", "Genus","Genus2","Number","RDP")]
-ls.02<-levels(posigtab$Number)
-
-pL2fc.ILF<-ggplot(posigtab, aes(y=Genus2, x=log2FoldChange, color=Order)) +
-  geom_vline(xintercept = 0.0, color = "gray", size = 0.5) +
-  geom_point(size=6) +
-  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) +
-  scale_color_manual(values=pal.pairMini) 
-#pL2fc.ILF # uncomment to print plot
-
-##################################################
-########## M.decora Adonis #######################
-##################################################
-### Adonis analysis of ILF and intestinum samples
-bray.md<- phyloseq::distance(subset_samples(phyT.md,Sample_Type!="Bladder"), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
-sd.md <- data.frame(sample_data(subset_samples(phyT.md,Sample_Type!="Bladder"))) # make a data frame from the sample_data (sample data . macrobdella decora)
-pairwise.adonis(bray.md,paste(sd.md$Sample_Type,sd.md$AnimalSource))
-### Adonis analysis of just CT and MA samples
-bray.md<- phyloseq::distance(subset_samples(phyT.md,Sample_Type!="Bladder" & AnimalSource%in%c("Wlot","GrotonMA")), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
-sd.md <- data.frame(sample_data(subset_samples(phyT.md,Sample_Type!="Bladder" & AnimalSource%in%c("Wlot","GrotonMA")))) # make a data frame from the sample_data (sample data . macrobdella decora)
-pairwise.adonis(bray.md,paste(sd.md$Sample_Type,sd.md$AnimalSource))
-
-########## DaF in a loop ##########
-### Macrobdella decora ILF by Da1F ###
-phyT.mdDaFilf<-subset_samples(merge_phyloseq(phyT.mdCT,phyT.mdMA),Sample_Type=="ILF" & Da2F%in%c("none","Unk","0")) # merge fed Mdecora ILF samples (phyloseq Transformed . macrobdella decora Days after Feeding ILF)
-ls.Da1F<-levels(factor(sample_data(phyT.mdDaFilf)$Da1Fb))
-mtx.sigDaFILF<-matrix(ncol=length(ls.Da1F),nrow=length(ls.Da1F))
-dimnames(mtx.sigDaFILF) = list(c(ls.Da1F),c(ls.Da1F))
-for(day1 in c(ls.Da1F)){
-  for(day in c(ls.Da1F)){ 
-    if(day==day1){next}
-    loop.mdILF<-subset_samples(phyT.mdDaFilf,Da1Fb%in%c(day1,day)) # Examine only ILF data
-    bray.mdILF<- phyloseq::distance(loop.mdILF, method = "bray") # Calculate bray curtis distance matrix
-    df.mdILF <- data.frame(sample_data(loop.mdILF)) # make a data frame from the sample_data
-    perm.mdILF<-adonis(bray.mdILF ~ Da1Fb, data = df.mdILF, method = "bray") # Adonis test
-    sig.mdILF<-as.data.frame(perm.mdILF$aov.tab)["Da1F", "Pr(>F)"]
-    print(perm.mdILF$aov.tab)
-    mtx.sigDaFILF[day1,day] <- as.numeric(sig.mdILF)
-  }
-}
-write.table(mtx.sigDaFILF, "tableSig_DaFMd_ILF.csv", sep=",",row.names=TRUE,col.names=TRUE) # export table to csv, row and column names included
-
-
-##################################################
-########## Define core and common OTUs  ##########
-##################################################
+###########################################################################################
+########## Define core and common OTUs  ###################################################
+###########################################################################################
 cMin<-0.03 # define minimum to count prevalence in a sample
 ### Hirudo ###
 phyR.hv<-subset_samples(phyR.pru2,sample_names(phyR.pru2)%in%c(sample_names(phyT.hv))) # create raw reads phyloseq object of Hirduo verbana samples (physeq Raw . hirudo verbana)
@@ -791,43 +675,119 @@ dt.TAXcom2 <- Reduce(function(...) merge(..., all = T), ls.taxdt.Com) # merge li
 dt.TAXcom2[is.na(dt.TAXcom2)] <- "" # replace <NA> values with empty values
 write.table(dt.TAXcom2, "tableTax_commonCompile.csv", row.names=FALSE,sep=",") # export table to csv, row names excluded
 
-
-
 #####################################################################################
-########## FIGURE 4 #################################################################
+########## FIGURE 2 #################################################################
 #####################################################################################
+phyR.adult <- subset_samples(phyR.pru2,sample_names(phyR.sin)%in%c(sample_names(phyT.leech)))
+phyR.ILF <- subset_samples(phyR.adult,Sample_Type%in%c("ILF")) # subset phyR.md to include only ILF samples
+phyR.Int <- subset_samples(phyR.adult,Sample_Type=="Intestinum")
+########## Alpha Diversity ILF ##########
+phyR.adILF <- subset_samples(phyR.ILF,!Da2F%in%c("1","2","4","7","8","28") & !Da1F%in%c("1","2","4","7")) # keep samples that are less than 1 or more than 30 days after feeding (Phyloseq raw . alpha diversity ILF)) # assign data for alpha diversity analysis (alpha diversitydata). This data must be non-transformed
+pDiv.ILF <- plot_richness(phyR.adILF, x = "Taxonomic_ID",measures=c("Shannon")) +
+  geom_boxplot(aes(fill=Taxonomic_ID)) +
+  geom_jitter(width=0.15) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10),limits=c(0,3)) +
+  theme_bw() +
+  theme(text=element_text(size=10),axis.text.x=element_text(angle = 0),axis.title.x=element_blank(),legend.position = "none") +
+  scale_x_discrete(labels=c("Hverbana" = "Hirudo verbana", "Mdecora" = "Macrobdella decora")) +
+  scale_fill_manual(values=c("#808080","#f9f9f9"))
+#pDiv.ILF # uncomment to print plot
+########## Alpha Diversity Intestinum ##########
+phyR.adInt <- subset_samples(phyR.Int,!Da2F%in%c("1","2","4","7","8","28") & !Da1F%in%c("1","2","4","7")) # keep samples that are less than 1 or more than 30 days after feeding (Phyloseq raw . alpha diversity Intestinum)
+pDiv.Int <- plot_richness(phyR.adInt, x="Taxonomic_ID", measures=c("Shannon")) + 
+  geom_boxplot(aes(fill=Taxonomic_ID)) +
+  geom_jitter(width=0.15) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10),limits=c(0,3)) +
+  theme_bw() +
+  theme(text=element_text(size=10),axis.text.x=element_text(angle = 0),axis.title.x=element_blank(),legend.position = "none") +
+  scale_x_discrete(labels=c("Hverbana" = "Hirudo verbana", "Mdecora" = "Macrobdella decora")) +
+  scale_fill_manual(values=c("#808080","#f9f9f9"))
+#pDiv.Int # uncomment to print plot
+ggsave(plot_grid(pDiv.ILF, pDiv.Int, labels = "AUTO"), filename="Plots/plotAlpha_fig2.eps", device="eps", dpi="retina",width=6.87,units="in") # Save FIGURE 2 to .eps file
+########## end FIGURE 2 ##############################################################
+
+#####################################################################################################
+########## Effect of M.decora Collection Month ######################################################
+#####################################################################################################
+phyT.mdSeason <- subset_samples(phyT.md,AnimalSource%in%c("Wlot","GrotonMA"))
+sample_data(phyT.mdSeason)$Season <- with(sample_data(phyT.mdSeason),
+                                          ifelse(WildMonth=="April","April",
+                                          ifelse(WildMonth=="June","Warm",
+                                          ifelse(WildMonth=="July","Warm",
+                                          ifelse(WildMonth=="August","Warm",
+                                          ifelse(WildMonth=="September","Warm",
+                                          ifelse(WildMonth=="October","October",
+                                          as.character(AnimalSource))))))))
+bray.seasILF <- phyloseq::distance(subset_samples(phyT.mdSeason,Sample_Type=="ILF"), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+sd.seasILF <- data.frame(sample_data(subset_samples(phyT.mdSeason,Sample_Type=="ILF"))) # make a data frame from the sample_data (sample data . macrobdella decora)
+pairwise.adonis(bray.seasILF,sd.seasILF$Season)
+
+bray.seasInt <- phyloseq::distance(subset_samples(phyT.mdSeason,Sample_Type=="Intestinum"), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+sd.seasInt <- data.frame(sample_data(subset_samples(phyT.mdSeason,Sample_Type=="Intestinum"))) # make a data frame from the sample_data (sample data . macrobdella decora)
+pairwise.adonis(bray.seasInt,sd.seasInt$Season)
+
+####################################################################################################
+########## FIGURE 4 ################################################################################
+####################################################################################################
 ### Collection Month NMDS - ILF ###
-dsNMDS<-subset_samples(phyT.md,Sample_Type=="ILF") # define data for analysis
-sample_data(dsNMDS)$WildMonth = factor(sample_data(dsNMDS)$WildMonth, levels = c("April","June","July","August","September","October")) # force Months to be in chronological order (instead of alphabetical default)
-mNMDS<-"unifrac" # define metric for analysis
+dsNMDS <- subset_samples(phyT.mdSeason,Sample_Type=="ILF") # define data for analysis
+mNMDS <- "unifrac" # define metric for analysis
 distOrd = phyloseq::distance(dsNMDS, method = c(mNMDS)) # calculate distances
 ord = ordinate(dsNMDS, method = "NMDS", distance = distOrd) # calculate ordination
-nmds.collILF<-plot_ordination(dsNMDS, ord, color = "WildMonth") + 
-  geom_point(aes(fill=WildMonth),size=2) +
+nmds.collILF <- plot_ordination(dsNMDS, ord, color = "Season") + 
+  geom_point(aes(fill=Season),size=2) +
   stat_ellipse(type = "t", level = 0.95, linetype = 2) +
-  scale_color_manual(values=c("#9bcdff","#ffb4b4","#ff0101","#810000","#810000","#005ab4")) +
+  ggtitle("ILF") +
+  scale_color_manual(values=pal.CB) +
   theme_bw() +
   theme(text=element_text(size=10),legend.position="none")
 #nmds.collILF # uncomment to print plot
-nmds.legend<-plot_ordination(dsNMDS, ord, color = "WildMonth") + 
-  scale_color_manual(values=c("#9bcdff","#ffb4b4","#ff0101","#810000","#810000","#005ab4")) +
+nmds.legend <- plot_ordination(dsNMDS, ord, color = "Season") + 
+  scale_color_manual(values=pal.CB) +
   theme(text=element_text(size=10),legend.position='top',legend.title = element_blank())
 
 ### Collection Month NMDS - Intestinum ###
-dsNMDSint<-subset_samples(phyT.md,Sample_Type=="Intestinum") # define data for analysis
-sample_data(dsNMDSint)$WildMonth = factor(sample_data(dsNMDSint)$WildMonth, levels = c("April","June","July","August","September","October")) # force Months to be in chronological order (instead of alphabetical default)
+dsNMDSint <- subset_samples(phyT.mdSeason,Sample_Type=="Intestinum") # define data for analysis
 distOrdInt = phyloseq::distance(dsNMDSint, method = c(mNMDS)) # calculate distances
 ordInt = ordinate(dsNMDSint, method = "NMDS", distance = distOrdInt) # calculate ordination
-nmds.collInt<-plot_ordination(dsNMDSint, ordInt, color = "WildMonth") + 
-  geom_point(aes(fill=WildMonth),size=2) +
+nmds.collInt <- plot_ordination(dsNMDSint, ordInt, color = "Season") + 
+  geom_point(aes(fill=Season),size=2) +
   stat_ellipse(type = "t", level = 0.95, linetype = 2) +
-  scale_color_manual(values=c("#9bcdff","#ffb4b4","#ff0101","#810000","#810000","#005ab4")) +
+  ggtitle("Intestinum") +
+  scale_color_manual(values=pal.CB) +
   theme_bw() +
   theme(text=element_text(size=10),legend.position="none")
 #nmds.collInt # uncomment to print plot
 ggsave(plot_grid(plot_grid(nmds.collILF, nmds.collInt, labels = "AUTO"),cowplot::get_legend(nmds.legend),nrow=2,rel_heights = c(5, 1)), filename="NMDS/plotNMDS_fig4.eps", device="eps", dpi="retina",width=6.87,units="in") # Save FIGURE 4 to .eps file
 ########## end FIGURE 4 ##############################################################
 
+### Adonis analysis of ILF and intestinum samples
+bray.md<- phyloseq::distance(subset_samples(phyT.md,Sample_Type!="Bladder"), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+sd.md <- data.frame(sample_data(subset_samples(phyT.md,Sample_Type!="Bladder"))) # make a data frame from the sample_data (sample data . macrobdella decora)
+pairwise.adonis(bray.md,paste(sd.md$Sample_Type,sd.md$AnimalSource))
+### Adonis analysis of just CT and MA samples
+bray.md<- phyloseq::distance(subset_samples(phyT.md,Sample_Type!="Bladder" & AnimalSource%in%c("Wlot","GrotonMA")), method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+sd.md <- data.frame(sample_data(subset_samples(phyT.md,Sample_Type!="Bladder" & AnimalSource%in%c("Wlot","GrotonMA")))) # make a data frame from the sample_data (sample data . macrobdella decora)
+pairwise.adonis(bray.md,paste(sd.md$Sample_Type,sd.md$AnimalSource))
+
+### Adonis analysis of ILF after feeding ###
+phyT.mdDaFilf <- subset_samples(merge_phyloseq(phyT.mdCT,phyT.mdMA),Sample_Type=="ILF" & Da2F%in%c("none","Unk","0")) # merge fed Mdecora ILF samples (phyloseq Transformed . macrobdella decora Days after Feeding ILF)
+ls.Da1F <- levels(factor(sample_data(phyT.mdDaFilf)$Da1Fb))
+mtx.sigDaFILF <- matrix(ncol=length(ls.Da1F),nrow=length(ls.Da1F))
+dimnames(mtx.sigDaFILF) = list(c(ls.Da1F),c(ls.Da1F))
+for(day1 in c(ls.Da1F)){
+  for(day in c(ls.Da1F)){ 
+    if(day==day1){next}
+    loop.mdILF <-subset_samples(phyT.mdDaFilf,Da1Fb%in%c(day1,day)) # Examine only ILF data
+    bray.mdILF <- phyloseq::distance(loop.mdILF, method = "bray") # Calculate bray curtis distance matrix
+    df.mdILF <- data.frame(sample_data(loop.mdILF)) # make a data frame from the sample_data
+    perm.mdILF <- adonis(bray.mdILF ~ Da1Fb, data = df.mdILF, method = "bray") # Adonis test
+    sig.mdILF <- as.data.frame(perm.mdILF$aov.tab)["Da1F", "Pr(>F)"]
+    print(perm.mdILF$aov.tab)
+    mtx.sigDaFILF[day1,day] <- as.numeric(sig.mdILF)
+  }
+}
+write.table(mtx.sigDaFILF, "tableSig_DaFMd_ILF.csv", sep=",",row.names=TRUE,col.names=TRUE) # export table to csv, row and column names included
 
 #####################################################################################
 ########## FIGURE 5 #################################################################
@@ -904,10 +864,10 @@ ggsave(plot_grid(pBW.DaF, labels = "AUTO"), filename="Plots/plotBW_Fig5.eps", de
 ############################################################################################
 ########## Alpha Diversity ILF ##########
 #phyT.DaFilf<-subset_samples(merge_phyloseq(phyT.mdCT,phyT.mdMA,phyT.hv),Sample_Type=="ILF" & Da2F%in%c("none","Unk","0")) # merge fed Hverbana and Mdecora ILF samples (phyloseq Transformed . Days after Feeding ILF)
-phyR.mdDaFilf<-subset_samples(phyR.sin,sample_names(phyR.sin)%in%c(sample_names(phyT.DaFilf)) ) # collect raw data values from only Mdecora samples (phyloseq Raw . macrobdella decora Days after Feeding ILF)
+phyR.mdDaFilf <- subset_samples(phyR.sin,sample_names(phyR.sin)%in%c(sample_names(phyT.DaFilf)) ) # collect raw data values from only Mdecora samples (phyloseq Raw . macrobdella decora Days after Feeding ILF)
 sample_data(phyR.mdDaFilf)$Da1Fb = factor(sample_data(phyR.mdDaFilf)$Da1Fb, levels = c(0,1,2,4,7,30,"90+")) # Reorder Da1Fb
 
-pDiv.mdDaFilf<-plot_richness(phyR.mdDaFilf, x = "Da1Fb",measures=c("Shannon")) +
+pDiv.mdDaFilf <- plot_richness(phyR.mdDaFilf, x = "Da1Fb",measures=c("Shannon")) +
   geom_boxplot(aes(fill=Da1Fb)) +
   geom_jitter(width=0.15) +
   facet_grid(~Taxonomic_ID, scales="free_x",space="free") +
@@ -919,9 +879,9 @@ pDiv.mdDaFilf<-plot_richness(phyR.mdDaFilf, x = "Da1Fb",measures=c("Shannon")) +
 
 ##### weighted Unifrac distance by Da1F #####
 # Thank you to jeffkimbrel ! #
-phyT.mdILFdaf<-subset_samples(phyT.DaFilf, Taxonomic_ID=="Mdecora")
-sample_data(phyT.mdILFdaf)$name<-sample_names(phyT.mdILFdaf)
-dist.mdILFdaf<- phyloseq::distance(phyT.mdILFdaf, method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
+phyT.mdILFdaf <- subset_samples(phyT.DaFilf, Taxonomic_ID=="Mdecora")
+sample_data(phyT.mdILFdaf)$name <- sample_names(phyT.mdILFdaf)
+dist.mdILFdaf <- phyloseq::distance(phyT.mdILFdaf, method = "bray") # Calculate bray curtis distance matrix (bray metric . macrobdella decora)
 
 # remove self-comparisons
 md.mdILFdaf = melt(as.matrix(dist.mdILFdaf)) %>%
@@ -930,21 +890,21 @@ md.mdILFdaf = melt(as.matrix(dist.mdILFdaf)) %>%
 
 # get sample data (S4 error OK and expected)
 sd.mdILFdaf = sample_data(phyT.mdILFdaf) %>%
-  select("name","Da1Fb","Header") %>%
+  select("name","Da1Fb","Header","MealLot1","Date1stFeed") %>%
   mutate_if(is.factor,as.character) 
 
 # combined distances with sample data
-colnames(sd.mdILFdaf) = c("Var1", "Type1","Source")
+colnames(sd.mdILFdaf) = c("Var1", "Type1","Source","MealLot","Date1stFeed")
 md.mdILFdaf2 = left_join(md.mdILFdaf, sd.mdILFdaf, by = "Var1")
 
-colnames(sd.mdILFdaf) = c("Var2", "Da1F","Source")
+colnames(sd.mdILFdaf) = c("Var2", "Da1F","Source","MealLot","Date1stFeed")
 md.mdILFdaf3 = left_join(md.mdILFdaf2, sd.mdILFdaf, by = "Var2")
 
 wu.sd2<-md.mdILFdaf3[md.mdILFdaf3$Type1==0,]
 wu.sd2$Da1F = factor(wu.sd2$Da1F, levels = c(0,1,2,4,7,30,"90+")) # Reorder Da1Fb
 colnames(wu.sd2)[colnames(wu.sd2)=="value"] <- "distance"
 
-pBray.mdILFdaf<-ggplot(wu.sd2, aes(x = Da1F, y = distance)) +
+pBray.mdILFdaf <- ggplot(wu.sd2, aes(x = Da1F, y = distance, color=Date1stFeed.x)) +
   theme_bw() +
   geom_violin(aes(x = Da1F, y = distance)) +
   geom_jitter(width = 0.2) +
@@ -962,9 +922,9 @@ ggsave(plot_grid(pDiv.mdDaFilf, pBray.mdILFdaf, labels = "AUTO", nrow=2), filena
 ########## SUPPLEMENTAL FIGURE 1 ####################################################
 #####################################################################################
 ### ILF NMDS - Collection Site ###
-dsNMDS.mdILF<-subset_samples(phyT.md,Sample_Type=="ILF") # define data for analysis
+dsNMDS.mdILF <- subset_samples(phyT.md,Sample_Type=="ILF") # define data for analysis
 sample_data(dsNMDS.mdILF)$AnimalSource = factor(sample_data(dsNMDS.mdILF)$AnimalSource, levels = c("Wlot","GrotonMA","CarogaNY","MtSnowVT")) # force AnimalSource order (instead of alphabetical default)
-mNMDS<-"unifrac" # define metric for analysis
+mNMDS <-"unifrac" # define metric for analysis
 distOrd = phyloseq::distance(dsNMDS.mdILF, method = c(mNMDS)) # calculate distances
 ord = ordinate(dsNMDS.mdILF, method = "NMDS", distance = distOrd) # calculate ordination
 nmds.mdILFstate<-plot_ordination(dsNMDS.mdILF, ord, color = "AnimalSource") + 
@@ -992,7 +952,6 @@ ggsave(plot_grid(nmds.mdILFstate, nmds.mdIntState, labels = "AUTO"), filename="N
 
 ### Alpha Diversity Intestinum ###
 #phyT.mdDaFint<-subset_samples(merge_phyloseq(phyT.mdCT,phyT.mdMA),Sample_Type=="Intestinum" & Da2F%in%c("none","Unk","0")) # merge fed Mdecora Intestinum samples (phyloseq Transformed . macrobdella decora Days after Feeding intestinum)
-
 phyR.mdDaFint<-subset_samples(phyR.sin,sample_names(phyR.sin)%in%c(sample_names(phyT.mdDaFint)))
 sample_data(phyR.mdDaFint)$Da1Fb = factor(sample_data(phyR.mdDaFint)$Da1Fb, levels = c(0,1,2,4,7,30)) # Reorder Da1Fb
 
@@ -1006,11 +965,6 @@ pDiv.mdDaFint<-plot_richness(phyR.mdDaFint, x = "Da1Fb",measures=c("Shannon")) +
 pDiv.mdDaFint # uncomment to print plot
 
 ggsave(plot_grid(pDiv.ILF, pDiv.Int, labels = "AUTO"), filename="Plots/plotAlpha_Int.eps", device="eps", dpi="retina",width=6.87,units="in") # Save FIGURE 2 to .eps file
-
-
-
-
-
 
 ##############################
 # END # END # END # END # END # END 
